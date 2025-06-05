@@ -1,0 +1,11 @@
+# Core MCP dependency
+mcp>=1.9.2
+
+# MCPO for remote serving
+mcpo>=0.0.14
+
+# Development dependencies (uncomment for development)
+# pytest>=7.0.0
+# pytest-asyncio>=0.21.0
+# black>=23.0.0
+# flake8>=6.0.0

@@ -17,7 +17,9 @@ import sys
 import os
 
 # Add the current directory to path so we can import our server
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(project_root)
+sys.path.append(os.path.join(project_root, 'src'))
 
 # Import our server components
 from todo_server import TodoItem, TodoStorage, server

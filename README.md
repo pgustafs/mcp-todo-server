@@ -130,7 +130,6 @@ podman exec -it mcp-todo /bin/bash
 
 **Container health check:**
 ```bash
-podman healthcheck run mcp-todo
 ```
 
 ### Environment Variables
@@ -156,18 +155,37 @@ podman run -v ./todo-data:/app/data:Z mcp-todo-server
 
 **Using systemd service:**
 ```bash
-# Generate systemd service file
-podman generate systemd --new --name mcp-todo > ~/.config/systemd/user/mcp-todo.service
 
-# Enable and start service
-systemctl --user daemon-reload
-systemctl --user enable mcp-todo.service
-systemctl --user start mcp-todo.service
 ```
 
 **Container orchestration with podman play kube:**
 ```yaml
 # mcp-todo-server-pod.yml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mcp-todo
+  labels:
+    app: mcp-todo
+spec:
+  containers:
+    - name: mcp-todo
+      image: quay.io/pgustafs/mcp-todo-server:latest
+      ports:
+        - containerPort: 8000
+          hostPort: 8082
+      env:
+        #- name: MCPO_API_KEY
+        #  value: "my-top-secret-key"
+      securityContext:
+        runAsNonRoot: true
+      volumeMounts:
+        - name: todo-data
+          mountPath: /opt/app-root/src/data
+
+  volumes:
+    - name: todo-data
+      emptyDir: {}
 ```
 
 ## 📋 Available Tools

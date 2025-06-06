@@ -31,8 +31,11 @@ COPY src/ ./src/
 COPY tests/ ./tests/
 COPY docs/ ./docs/
 
-# Create data directory for persistent storage
-RUN mkdir -p /opt/app-root/src/data
+# Create data directory for persistent storage and set proper permissions
+RUN mkdir -p /opt/app-root/src/data && \
+    chown -R 1001:0 /opt/app-root/src && \
+    chmod -R g+rw /opt/app-root/src/data && \
+    chmod g+s /opt/app-root/src/data
 
 # Switch back to the default user (already configured in the base image)
 USER 1001

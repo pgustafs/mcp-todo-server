@@ -84,7 +84,7 @@ podman volume create todo-data
 podman run -d \
   --name mcp-todo \
   -p 8000:8000 \
-  -v todo-data:/app/data \
+  -v todo-data:/opt/app-root/src/data \
   mcp-todo-server
 
 # Alternative: Bind mount to host directory
@@ -92,7 +92,7 @@ mkdir -p ./todo-data
 podman run -d \
   --name mcp-todo \
   -p 8000:8000 \
-  -v ./todo-data:/app/data:Z \
+  -v ./todo-data:/opt/app-root/src/data:Z \
   mcp-todo-server
 ```
 
@@ -138,13 +138,13 @@ podman healthcheck run mcp-todo
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MCPO_API_KEY` | `top-secret` | API key for MCPO authentication |
-| `TODO_STORAGE_PATH` | `/app/data/todos.json` | Path to store the todos JSON file |
+| `TODO_STORAGE_PATH` | `/opt/app-root/src/data/todos.json` | Path to store the todos JSON file |
 | `PYTHONPATH` | `/app` | Python module search path |
 | `PYTHONUNBUFFERED` | `1` | Ensure Python output is not buffered |
 
 ### Container Security
 
-The container runs as a non-root user (`appuser`, UID 1001) for enhanced security. The application data is stored in `/app/data/` which should be mounted as a volume for persistence.
+The container runs as a non-root user (`appuser`, UID 1001) for enhanced security. The application data is stored in `/opt/app-root/src/data/` which should be mounted as a volume for persistence.
 
 **SELinux considerations (for RHEL/Fedora hosts):**
 ```bash

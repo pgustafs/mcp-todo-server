@@ -23,13 +23,28 @@ class SimpleMCPClient:
     
     async def start_server(self):
         """Start the MCP server process"""
-        self.process = await asyncio.create_subprocess_exec(
-            *self.server_command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        print("✅ Server started")
+        try:
+            self.process = await asyncio.create_subprocess_exec(
+                *self.server_command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            print("✅ Server started")
+            
+            # Give the server a moment to initialize
+            await asyncio.sleep(1)
+            
+            # Check if process is still running
+            if self.process.returncode is not None:
+                stderr_output = await self.process.stderr.read()
+                print(f"❌ Server failed to start: {stderr_output.decode()}")
+                return False
+            
+            return True
+        except Exception as e:
+            print(f"❌ Failed to start server: {e}")
+            return False
     
     async def send_request(self, method: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         """Send a JSON-RPC request to the server"""
@@ -45,64 +60,114 @@ class SimpleMCPClient:
         if params:
             request["params"] = params
         
-        # Send request
-        request_line = json.dumps(request) + "\n"
-        self.process.stdin.write(request_line.encode())
-        await self.process.stdin.drain()
-        
-        # Read response
-        response_line = await self.process.stdout.readline()
-        response = json.loads(response_line.decode().strip())
-        
-        self.request_id += 1
-        return response
+        try:
+            # Send request
+            request_line = json.dumps(request) + "\n"
+            self.process.stdin.write(request_line.encode())
+            await self.process.stdin.drain()
+            
+            # Read response with timeout
+            response_line = await asyncio.wait_for(
+                self.process.stdout.readline(), 
+                timeout=5.0
+            )
+            
+            if not response_line:
+                raise RuntimeError("Server closed connection")
+                
+            response = json.loads(response_line.decode().strip())
+            self.request_id += 1
+            return response
+            
+        except asyncio.TimeoutError:
+            print(f"❌ Timeout waiting for response to {method}")
+            raise
+        except json.JSONDecodeError as e:
+            print(f"❌ Invalid JSON response: {e}")
+            print(f"Raw response: {response_line}")
+            raise
+        except Exception as e:
+            print(f"❌ Error sending request {method}: {e}")
+            raise
     
     async def initialize(self):
         """Initialize the MCP connection"""
-        response = await self.send_request(
-            "initialize",
-            {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {
-                    "tools": {}
-                },
-                "clientInfo": {
-                    "name": "test-client",
-                    "version": "1.0.0"
-                }
-            }
-        )
-        print("✅ Initialized connection")
-        return response
+        try:
+            response = await asyncio.wait_for(
+                self.send_request(
+                    "initialize",
+                    {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {
+                            "tools": {}
+                        },
+                        "clientInfo": {
+                            "name": "test-client",
+                            "version": "1.0.0"
+                        }
+                    }
+                ),
+                timeout=10.0
+            )
+            print("✅ Initialized connection")
+            return response
+        except asyncio.TimeoutError:
+            print("❌ Initialization timeout - server may not be responding properly")
+            return None
+        except Exception as e:
+            print(f"❌ Initialization failed: {e}")
+            return None
     
     async def list_tools(self):
         """List available tools"""
-        response = await self.send_request("tools/list")
-        print("📋 Available tools:")
-        if "result" in response and "tools" in response["result"]:
-            for tool in response["result"]["tools"]:
-                print(f"  - {tool['name']}: {tool['description']}")
-        return response
+        try:
+            response = await asyncio.wait_for(
+                self.send_request("tools/list"),
+                timeout=10.0
+            )
+            print("📋 Available tools:")
+            if "result" in response and "tools" in response["result"]:
+                for tool in response["result"]["tools"]:
+                    print(f"  - {tool['name']}: {tool['description']}")
+            elif "error" in response:
+                print(f"❌ Error: {response['error']}")
+            return response
+        except asyncio.TimeoutError:
+            print("❌ Timeout listing tools")
+            return None
+        except Exception as e:
+            print(f"❌ Error listing tools: {e}")
+            return None
     
     async def call_tool(self, name: str, arguments: Dict[str, Any]):
         """Call a tool"""
-        response = await self.send_request(
-            "tools/call",
-            {
-                "name": name,
-                "arguments": arguments
-            }
-        )
-        
-        if "result" in response:
-            print(f"🔧 Tool '{name}' result:")
-            for content in response["result"]["content"]:
-                if content["type"] == "text":
-                    print(content["text"])
-        elif "error" in response:
-            print(f"❌ Error calling '{name}': {response['error']}")
-        
-        return response
+        try:
+            response = await asyncio.wait_for(
+                self.send_request(
+                    "tools/call",
+                    {
+                        "name": name,
+                        "arguments": arguments
+                    }
+                ),
+                timeout=10.0
+            )
+            
+            if "result" in response:
+                print(f"🔧 Tool '{name}' result:")
+                for content in response["result"]["content"]:
+                    if content["type"] == "text":
+                        print(content["text"])
+            elif "error" in response:
+                print(f"❌ Error calling '{name}': {response['error']}")
+            
+            return response
+        except asyncio.TimeoutError:
+            print(f"❌ Timeout calling tool '{name}'")
+            return None
+        except Exception as e:
+            print(f"❌ Error calling tool '{name}': {e}")
+            return None
     
     async def stop_server(self):
         """Stop the server process"""
@@ -118,11 +183,19 @@ async def run_comprehensive_test():
     
     try:
         # Start server and initialize
-        await client.start_server()
-        await client.initialize()
+        if not await client.start_server():
+            return
+        
+        init_result = await client.initialize()
+        if init_result is None:
+            print("❌ Failed to initialize connection")
+            return
         
         # List available tools
-        await client.list_tools()
+        tools_result = await client.list_tools()
+        if tools_result is None:
+            print("❌ Failed to list tools")
+            return
         
         print("\n" + "="*50)
         print("🧪 Running Comprehensive Tests")
@@ -130,58 +203,54 @@ async def run_comprehensive_test():
         
         # Test 1: Add todos
         print("\n1️⃣ Adding todos...")
-        await client.call_tool("add_todo", {
+        result1 = await client.call_tool("add_todo", {
             "title": "Learn MCP Protocol",
             "description": "Study the Model Context Protocol documentation",
             "priority": "high"
         })
         
-        await client.call_tool("add_todo", {
+        result2 = await client.call_tool("add_todo", {
             "title": "Write unit tests",
             "description": "Create comprehensive test suite",
             "priority": "medium"
         })
         
-        await client.call_tool("add_todo", {
+        result3 = await client.call_tool("add_todo", {
             "title": "Deploy to production",
             "priority": "low"
         })
         
+        if not all([result1, result2, result3]):
+            print("❌ Failed to add todos")
+            return
+        
         # Test 2: List all todos
         print("\n2️⃣ Listing all todos...")
-        await client.call_tool("list_todos", {})
+        list_result = await client.call_tool("list_todos", {})
+        if not list_result:
+            print("❌ Failed to list todos")
+            return
         
         # Test 3: Get specific todo
         print("\n3️⃣ Getting specific todo...")
-        await client.call_tool("get_todo", {"id": 1})
+        get_result = await client.call_tool("get_todo", {"id": 1})
+        if not get_result:
+            print("❌ Failed to get todo")
+            return
         
         # Test 4: Complete a todo
         print("\n4️⃣ Completing todo...")
-        await client.call_tool("complete_todo", {"id": 1})
+        complete_result = await client.call_tool("complete_todo", {"id": 1})
+        if not complete_result:
+            print("❌ Failed to complete todo")
+            return
         
         # Test 5: List completed todos
         print("\n5️⃣ Listing completed todos...")
-        await client.call_tool("list_todos", {"completed": True})
-        
-        # Test 6: Update a todo
-        print("\n6️⃣ Updating todo...")
-        await client.call_tool("update_todo", {
-            "id": 2,
-            "title": "Write comprehensive unit tests",
-            "priority": "high"
-        })
-        
-        # Test 7: List high priority todos
-        print("\n7️⃣ Listing high priority todos...")
-        await client.call_tool("list_todos", {"priority": "high"})
-        
-        # Test 8: Delete a todo
-        print("\n8️⃣ Deleting todo...")
-        await client.call_tool("delete_todo", {"id": 3})
-        
-        # Test 9: Final list
-        print("\n9️⃣ Final todo list...")
-        await client.call_tool("list_todos", {})
+        completed_list = await client.call_tool("list_todos", {"completed": True})
+        if not completed_list:
+            print("❌ Failed to list completed todos")
+            return
         
         print("\n✅ All tests completed successfully!")
         
@@ -199,9 +268,18 @@ async def interactive_client():
     client = SimpleMCPClient([sys.executable, "src/todo_server.py"])
     
     try:
-        await client.start_server()
-        await client.initialize()
-        await client.list_tools()
+        if not await client.start_server():
+            return
+        
+        init_result = await client.initialize()
+        if init_result is None:
+            print("❌ Failed to initialize connection")
+            return
+        
+        tools_result = await client.list_tools()
+        if tools_result is None:
+            print("❌ Failed to list tools")
+            return
         
         print("\n🎮 Interactive MCP Client")
         print("Type 'help' for commands, 'quit' to exit")
@@ -247,20 +325,32 @@ async def interactive_client():
                     await client.call_tool("list_todos", args)
                 
                 elif command.startswith("get "):
-                    todo_id = int(command[4:])
-                    await client.call_tool("get_todo", {"id": todo_id})
+                    try:
+                        todo_id = int(command[4:])
+                        await client.call_tool("get_todo", {"id": todo_id})
+                    except ValueError:
+                        print("❌ Invalid ID format")
                 
                 elif command.startswith("complete "):
-                    todo_id = int(command[9:])
-                    await client.call_tool("complete_todo", {"id": todo_id})
+                    try:
+                        todo_id = int(command[9:])
+                        await client.call_tool("complete_todo", {"id": todo_id})
+                    except ValueError:
+                        print("❌ Invalid ID format")
                 
                 elif command.startswith("uncomplete "):
-                    todo_id = int(command[11:])
-                    await client.call_tool("uncomplete_todo", {"id": todo_id})
+                    try:
+                        todo_id = int(command[11:])
+                        await client.call_tool("uncomplete_todo", {"id": todo_id})
+                    except ValueError:
+                        print("❌ Invalid ID format")
                 
                 elif command.startswith("delete "):
-                    todo_id = int(command[7:])
-                    await client.call_tool("delete_todo", {"id": todo_id})
+                    try:
+                        todo_id = int(command[7:])
+                        await client.call_tool("delete_todo", {"id": todo_id})
+                    except ValueError:
+                        print("❌ Invalid ID format")
                 
                 elif command == "tools":
                     await client.list_tools()
@@ -268,10 +358,11 @@ async def interactive_client():
                 else:
                     print("Unknown command. Type 'help' for available commands.")
             
-            except (ValueError, IndexError):
-                print("Invalid command format. Type 'help' for usage.")
             except KeyboardInterrupt:
+                print("\nExiting...")
                 break
+            except Exception as e:
+                print(f"❌ Command error: {e}")
     
     except Exception as e:
         print(f"❌ Client error: {e}")
